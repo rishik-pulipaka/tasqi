@@ -1,18 +1,47 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import {
+  DMSans_400Regular,
+  DMSans_500Medium,
+  DMSans_600SemiBold,
+  DMSans_700Bold,
+} from "@expo-google-fonts/dm-sans"
+import { Fraunces_600SemiBold, Fraunces_700Bold } from "@expo-google-fonts/fraunces"
+import { useFonts } from "expo-font"
+import { Stack } from "expo-router"
+import { StatusBar } from "expo-status-bar"
+import { AppProvider, useApp } from "../context/AppContext"
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+function RootStack() {
+  const { username } = useApp()
 
-SplashScreen.preventAutoHideAsync();
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  // Stack.Protected handles the redirects: logged out -> login, logged in -> tabs
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
-  );
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Protected guard={!username}>
+        <Stack.Screen name="login" />
+      </Stack.Protected>
+      <Stack.Protected guard={!!username}>
+        <Stack.Screen name="(tabs)" />
+      </Stack.Protected>
+    </Stack>
+  )
+}
+
+export default function RootLayout() {
+  const [loaded] = useFonts({
+    DMSans_400Regular,
+    DMSans_500Medium,
+    DMSans_600SemiBold,
+    DMSans_700Bold,
+    Fraunces_600SemiBold,
+    Fraunces_700Bold,
+  })
+
+  if (!loaded) return null
+
+  return (
+    <AppProvider>
+      <StatusBar style="dark" />
+      <RootStack />
+    </AppProvider>
+  )
 }
