@@ -6,4 +6,8 @@ export type Task = {
   time: string
   date: string
   done: boolean
+  location?: {
+    lat: number;
+    lng: number;
+  }
 }
