@@ -1,3 +1,6 @@
+import * as Location from "expo-location";
+
+import { useFocusEffect, useRouter } from "expo-router";
 import {
   CalendarDays,
   Check,
@@ -5,23 +8,23 @@ import {
   ChevronLeft,
   ChevronRight,
   CirclePlus,
-  Clock3,
-  Trash2,
-  X,
-} from "lucide-react-native"
-import { useMemo, useState } from "react"
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput, View } from "react-native"
-import { useSafeAreaInsets } from "react-native-safe-area-context"
-import Svg, { Circle } from "react-native-svg"
-import Button from "../../components/Button"
-import Pet from "../../components/Pet"
-import Screen from "../../components/Screen"
-import Text from "../../components/Text"
-import TopBar from "../../components/TopBar"
-import { useApp } from "../../context/AppContext"
-import { colors, fonts, shadow, type } from "../../theme"
-import type { Period } from "../../types"
-import { dayKey, parseDayKey, scopeKeys } from "../../utils/dates"
+  Clock3, MapPin, Trash2,
+  X
+} from "lucide-react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Circle } from "react-native-svg";
+import Button from "../../components/Button";
+import Pet from "../../components/Pet";
+import Screen from "../../components/Screen";
+import Text from "../../components/Text";
+import TopBar from "../../components/TopBar";
+import { useApp } from "../../context/AppContext";
+import { colors, fonts, shadow, type } from "../../theme";
+import type { Period } from "../../types";
+import { dayKey, parseDayKey, scopeKeys } from "../../utils/dates";
+import { takePendingLocation, type TaskLocation } from "../../utils/taskLocation";
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 
@@ -65,6 +68,42 @@ export default function TasksScreen() {
   const [addOpen, setAddOpen] = useState(false)
   const [newTitle, setNewTitle] = useState("")
   const [newTime, setNewTime] = useState("9:00 AM")
+  const [newLocation, setNewLocation] = useState<TaskLocation | null>(null)
+  const router = useRouter()
+  const reopenAddOnFocus = useRef(false)
+  useFocusEffect(
+    useCallback(() => {
+      let active = true
+      takePendingLocation().then((loc) => {
+        if (!active) return
+        if (loc) setNewLocation(loc)
+        if (reopenAddOnFocus.current) {
+          reopenAddOnFocus.current = false
+          setAddOpen(true)
+        }
+      })
+      return () => {
+        active = false
+      }
+    }, []),
+  )
+
+  const assignLocation = async () => {
+    const { status, canAskAgain } = await Location.requestForegroundPermissionsAsync()
+    if (status !== "granted") {
+      Alert.alert(
+        "Location needed",
+        "Allow location access to pick where this task happens.",
+        canAskAgain
+          ? [{ text: "OK" }]
+          : [{ text: "Cancel", style: "cancel" }, { text: "Open settings", onPress: () => Linking.openSettings() }],
+      )
+      return
+    }
+    reopenAddOnFocus.current = true
+    setAddOpen(false) // close the Modal first so the pushed screen isn't hidden behind it
+    router.push({ pathname: "/mapUI", params: { pick: "1" } })
+  }
 
   const keys = useMemo(() => scopeKeys(selectedDate, period), [selectedDate, period])
   const visibleTasks = tasks.filter((task) => keys.includes(task.date))
@@ -97,6 +136,7 @@ export default function TasksScreen() {
         time: newTime.trim() || "Anytime",
         date: dayKey(selectedDate),
         done: false,
+        location: newLocation ?? undefined,
       },
     ])
     setNewTitle("")
@@ -264,6 +304,13 @@ export default function TasksScreen() {
                 returnKeyType="done"
                 style={styles.modalInput}
                 value={newTime}
+              />
+              <Button
+                icon={(c) => <MapPin color={c} size={18} />}
+                label={newLocation ? "Location set · change" : "Assign location"}
+                onPress={assignLocation}
+                style={{ marginTop: 14 }}
+                variant="secondary"
               />
 
               <Button
