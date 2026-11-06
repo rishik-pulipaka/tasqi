@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
@@ -90,7 +91,14 @@ class Task {
       id: Number(this.taskId),
       title: this.title,
       time: this.time,
-      date: dayKey(this.dueDate),
+      date: dayKey(
+        new Date(
+          this.dueDate.getFullYear(),
+          this.dueDate.getMonth(),
+          this.dueDate.getDate(),
+          12
+        )
+      ),
       done: this.isCompleted,
       type: this.type,
       location: this.location,
@@ -140,17 +148,15 @@ async function saveLocationToServer(_place: Place): Promise<void> {}
 // (Module-level so they survive leaving/re-opening this screen. Swap for server data later.)
 let savedLocations: Place[] = [];
 
-const toInputDate = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-
-const fromInputDate = (s: string) => {
-  const m = s.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return d.getMonth() === Number(m[2]) - 1 ? d : null;
-};
+const formatDate = (d: Date) =>
+  d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+const formatTime = (d: Date) =>
+  d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
 function ProgressRing({ done, total }: { done: number; total: number }) {
   const size = 43;
@@ -208,8 +214,8 @@ export default function TasksScreen() {
   const [deleteMode, setDeleteMode] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const [newTime, setNewTime] = useState("9:00 AM");
-  const [newDate, setNewDate] = useState("");
+  const [when, setWhen] = useState(new Date()); // date + time chosen in the popup
+  const [picker, setPicker] = useState<"date" | "time" | null>(null);
   const [newType, setNewType] = useState<TaskType>("other");
   const [newLocation, setNewLocation] = useState<Place | undefined>();
   const [places, setPlaces] = useState<Place[]>(savedLocations);
@@ -260,7 +266,10 @@ export default function TasksScreen() {
   };
 
   const openAdd = () => {
-    setNewDate(toInputDate(selectedDate));
+    const start = new Date(selectedDate);
+    start.setHours(9, 0, 0, 0);
+    setWhen(start);
+    setPicker(null);
     setAddOpen(true);
   };
 
@@ -303,23 +312,27 @@ export default function TasksScreen() {
     }
   };
 
-  const parsedDate = fromInputDate(newDate);
+  const onPickerValueChange = (_event: unknown, value: Date) => {
+    setWhen(value);
+    if (Platform.OS === "android") setPicker(null); // Android shows a one-shot dialog
+  };
 
   const addTask = () => {
-    if (!newTitle.trim() || !parsedDate) return;
+    if (!newTitle.trim()) return;
     const task = new Task(
       String(Date.now()),
       newTitle.trim(),
-      parsedDate,
-      newTime.trim() || "Anytime",
+      when,
+      formatTime(when),
       false,
       newType,
       newLocation
     );
     withUser((user) => user.addTask(task));
     saveTaskToServer(task);
+    setPeriod("day");
+    setSelectedDate(when); // show the day the task was placed on
     setNewTitle("");
-    setNewTime("9:00 AM");
     setNewType("other");
     setNewLocation(undefined);
     closeAdd();
@@ -547,24 +560,59 @@ export default function TasksScreen() {
                   value={newTitle}
                 />
 
-                <Text style={styles.modalLabel}>Date (YYYY-MM-DD)</Text>
-                <TextInput
-                  onChangeText={setNewDate}
-                  placeholder="2026-11-05"
-                  placeholderTextColor="#aaa6b2"
-                  style={[
-                    styles.modalInput,
-                    !parsedDate && { borderColor: colors.coralDark },
-                  ]}
-                  value={newDate}
-                />
-
-                <Text style={styles.modalLabel}>Time</Text>
-                <TextInput
-                  onChangeText={setNewTime}
-                  style={styles.modalInput}
-                  value={newTime}
-                />
+                <Text style={styles.modalLabel}>Date & time</Text>
+                <View style={{ flexDirection: "row", gap: 9 }}>
+                  <Pressable
+                    onPress={() => setPicker("date")}
+                    style={[styles.modalInput, styles.locPicker, { flex: 3 }]}
+                  >
+                    <CalendarDays color={colors.lavender} size={16} />
+                    <Text
+                      numberOfLines={1}
+                      style={{ flex: 1, color: colors.ink }}
+                    >
+                      {formatDate(when)}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setPicker("time")}
+                    style={[styles.modalInput, styles.locPicker, { flex: 2 }]}
+                  >
+                    <Clock3 color={colors.lavender} size={16} />
+                    <Text style={{ flex: 1, color: colors.ink }}>
+                      {formatTime(when)}
+                    </Text>
+                  </Pressable>
+                </View>
+                {picker && (
+                  <View style={styles.pickerBox}>
+                    <DateTimePicker
+                      accentColor={colors.lavender}
+                      display={
+                        Platform.OS === "ios"
+                          ? picker === "date"
+                            ? "inline"
+                            : "spinner"
+                          : "default"
+                      }
+                      mode={picker}
+                      textColor={colors.ink}
+                      themeVariant="light"
+                      onDismiss={() =>
+                        Platform.OS === "android" && setPicker(null)
+                      }
+                      onValueChange={onPickerValueChange}
+                      value={when}
+                    />
+                    {Platform.OS === "ios" && (
+                      <Button
+                        label="Done"
+                        onPress={() => setPicker(null)}
+                        variant="secondary"
+                      />
+                    )}
+                  </View>
+                )}
 
                 <Text style={styles.modalLabel}>Type</Text>
                 <View style={styles.chips}>
@@ -598,7 +646,10 @@ export default function TasksScreen() {
                   style={[styles.modalInput, styles.locPicker]}
                 >
                   <MapPin color={colors.lavender} size={16} />
-                  <Text numberOfLines={1} style={{ flex: 1 }}>
+                  <Text
+                    numberOfLines={1}
+                    style={{ flex: 1, color: colors.ink }}
+                  >
                     {newLocation?.name ?? "No location"}
                   </Text>
                   <ChevronDown color={colors.ink} size={16} />
@@ -657,7 +708,7 @@ export default function TasksScreen() {
                 )}
 
                 <Button
-                  disabled={!newTitle.trim() || !parsedDate}
+                  disabled={!newTitle.trim()}
                   label="Add to my list"
                   onPress={addTask}
                   style={{ marginTop: 20 }}
@@ -725,7 +776,7 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 10,
   },
-  menuText: { fontFamily: fonts.bold, fontSize: 12 },
+  menuText: { fontFamily: fonts.bold, fontSize: 12, color: colors.ink },
   panel: {
     padding: 18,
     backgroundColor: colors.panel,
@@ -810,6 +861,14 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     letterSpacing: 0.6,
     textTransform: "uppercase",
+  },
+  pickerBox: {
+    marginTop: 8,
+    overflow: "hidden",
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 13,
   },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
