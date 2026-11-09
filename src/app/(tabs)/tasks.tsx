@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
   Modal,
@@ -33,6 +33,14 @@ import { useApp } from "../../context/AppContext";
 import { colors, fonts, shadow, type } from "../../theme";
 import type { Period } from "../../types";
 import { dayKey, parseDayKey, scopeKeys } from "../../utils/dates";
+import {
+  createCalendarEvent,
+  deleteCalendarEvent,
+  fetchCalendarEvents,
+  hasCalendarAccess,
+  requestCalendarAccess,
+  type CalendarEventItem,
+} from "../../utils/calendar";
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
@@ -57,6 +65,7 @@ type UiTask = {
   done: boolean;
   type?: TaskType; // add `type?: TaskType; location?: Place` to Task in ../../types too
   location?: Place;
+  calendarEventId?: string;
 };
 
 class Task {
@@ -67,7 +76,8 @@ class Task {
     public time: string,
     public isCompleted = false,
     public type: TaskType = "other",
-    public location?: Place
+    public location?: Place,
+    public calendarEventId?: string
   ) {}
 
   markAsCompleted() {
@@ -82,7 +92,8 @@ class Task {
       t.time,
       t.done,
       t.type,
-      t.location
+      t.location,
+      t.calendarEventId
     );
   }
 
@@ -102,6 +113,7 @@ class Task {
       done: this.isCompleted,
       type: this.type,
       location: this.location,
+      calendarEventId: this.calendarEventId,
     };
   }
 }
@@ -157,6 +169,15 @@ const formatDate = (d: Date) =>
   });
 const formatTime = (d: Date) =>
   d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const formatClock = (d: Date) => {
+  let h = d.getHours();
+  const suffix = h >= 12 ? "PM" : "AM";
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${pad(d.getMinutes())} ${suffix}`;
+};
 
 function ProgressRing({ done, total }: { done: number; total: number }) {
   const size = 43;
@@ -223,6 +244,9 @@ export default function TasksScreen() {
   const [locQuery, setLocQuery] = useState("");
   const [results, setResults] = useState<Place[]>([]);
   const [searching, setSearching] = useState(false);
+  const [calStatus, setCalStatus] = useState<"unknown" | "granted" | "denied">("unknown");
+  const [calEvents, setCalEvents] = useState<CalendarEventItem[]>([]);
+  const [calLoading, setCalLoading] = useState(false);
 
   const keys = useMemo(
     () => scopeKeys(selectedDate, period),
@@ -247,6 +271,47 @@ export default function TasksScreen() {
           month: "long",
           year: "numeric",
         });
+
+  const rangeStart = useMemo(() => {
+    const d = parseDayKey(keys[0]);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, [keys]);
+  const rangeEnd = useMemo(() => {
+    const d = parseDayKey(keys[keys.length - 1]);
+    d.setHours(23, 59, 59, 999);
+    return d;
+  }, [keys]);
+
+  useEffect(() => {
+    hasCalendarAccess().then((ok) => {
+      if (ok) setCalStatus("granted");
+    });
+  }, []);
+
+  useEffect(() => {
+    if (calStatus !== "granted") return;
+    let active = true;
+    setCalLoading(true);
+    fetchCalendarEvents(rangeStart, rangeEnd)
+      .then((events) => {
+        if (active) setCalEvents(events);
+      })
+      .catch(() => {
+        if (active) setCalEvents([]);
+      })
+      .finally(() => {
+        if (active) setCalLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [calStatus, rangeStart, rangeEnd]);
+
+  const connectCalendar = async () => {
+    const ok = await requestCalendarAccess();
+    setCalStatus(ok ? "granted" : "denied");
+  };
 
   const moveDate = (direction: number) => {
     const next = new Date(selectedDate);
@@ -330,6 +395,19 @@ export default function TasksScreen() {
     );
     withUser((user) => user.addTask(task));
     saveTaskToServer(task);
+    // Write back to the device calendar: one-hour event at the task's date
+    // and time. The new task is already in the list, so the event id is
+    // patched onto it directly instead of going through withUser again.
+    const start = new Date(when);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    createCalendarEvent({ title: task.title, start, end }).then((eventId) => {
+      if (!eventId) return;
+      setTasks((prev) =>
+        (prev as UiTask[]).map((t) =>
+          t.id === Number(task.taskId) ? { ...t, calendarEventId: eventId } : t
+        ) as typeof prev
+      );
+    });
     setPeriod("day");
     setSelectedDate(when); // show the day the task was placed on
     setNewTitle("");
@@ -345,9 +423,12 @@ export default function TasksScreen() {
     });
 
   // The list updates immediately; saved locations are left alone on purpose.
+  // If the task was mirrored to the device calendar, its event goes too.
   const deleteTask = (id: number) => {
+    const target = tasks.find((t) => t.id === id);
     withUser((user) => user.removeTaskOfId(String(id)));
     deleteTaskOnServer(String(id));
+    if (target?.calendarEventId) deleteCalendarEvent(target.calendarEventId);
   };
 
   return (
@@ -497,6 +578,58 @@ export default function TasksScreen() {
             </View>
           )}
         </View>
+      </View>
+
+      <View style={[styles.panel, { marginTop: 13 }]}>
+        <View style={styles.panelHeading}>
+          <View>
+            <Text style={type.eyebrow}>From your device</Text>
+            <Text style={type.h2}>Apple Calendar</Text>
+          </View>
+        </View>
+        {calStatus !== "granted" ? (
+          <View style={{ paddingTop: 14, gap: 10 }}>
+            <Text style={styles.rowMetaText}>
+              {calStatus === "denied"
+                ? "Calendar access is off. Turn it on for Tasqi in Settings, then reopen this screen."
+                : "See your Apple Calendar events next to your tasks for the day, week, or month you are viewing."}
+            </Text>
+            <Button label="Connect Apple Calendar" onPress={connectCalendar} />
+          </View>
+        ) : calLoading ? (
+          <Text style={[styles.rowMetaText, { paddingTop: 14 }]}>
+            Loading your events...
+          </Text>
+        ) : calEvents.length ? (
+          <View style={styles.list}>
+            {calEvents.map((e) => (
+              <View key={e.id} style={styles.row}>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={styles.rowTitle}>{e.title}</Text>
+                  <View style={styles.rowMeta}>
+                    <Clock3 color={colors.muted} size={13} />
+                    <Text style={styles.rowMetaText}>
+                      {e.allDay
+                        ? "All day"
+                        : `${formatClock(e.start)} - ${formatClock(e.end)}`}
+                      {keys.length > 1 &&
+                        ` - ${e.start.toLocaleDateString("en-US", {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                        })}`}
+                      {e.calendarTitle ? ` - ${e.calendarTitle}` : ""}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={[styles.rowMetaText, { paddingTop: 14 }]}>
+            No calendar events in this view.
+          </Text>
+        )}
       </View>
 
       <View style={styles.actions}>
