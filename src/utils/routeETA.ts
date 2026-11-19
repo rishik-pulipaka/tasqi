@@ -1,7 +1,7 @@
 import polyline from "@mapbox/polyline";
 import type { TaskLocation } from "./taskLocation";
 
-const API = "http://localIP_replace:5000"
+const API = "http://LOCALIP:5000"
 
 export type RouteEta = { miles: number; minutes: number; path: [number, number][] }
 

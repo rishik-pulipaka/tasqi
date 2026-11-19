@@ -12,7 +12,7 @@ import {
   X
 } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle } from "react-native-svg";
 import Button from "../../components/Button";
@@ -23,8 +23,10 @@ import TopBar from "../../components/TopBar";
 import { useApp } from "../../context/AppContext";
 import { colors, fonts, shadow, type } from "../../theme";
 import type { Period } from "../../types";
+import { fetchCanvasTasks, mergeCanvasTasks } from "../../utils/canvasSync";
 import { dayKey, parseDayKey, scopeKeys } from "../../utils/dates";
 import { takePendingLocation, type TaskLocation } from "../../utils/taskLocation";
+
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 
@@ -71,7 +73,11 @@ export default function TasksScreen() {
   const [newLocation, setNewLocation] = useState<TaskLocation | null>(null)
   const router = useRouter()
   const reopenAddOnFocus = useRef(false)
+  const setTasksRef = useRef(setTasks)
+  setTasksRef.current = setTasks
+
   useFocusEffect(
+    
     useCallback(() => {
       let active = true
       takePendingLocation().then((loc) => {
@@ -82,10 +88,19 @@ export default function TasksScreen() {
           setAddOpen(true)
         }
       })
+      fetchCanvasTasks()
+      .then((incoming) => {
+        console.log("Canvas tasks received:", incoming.length); // test if not logged the canvas sync isnt connected check the IP in canvasSync.ts or the canvas key or URL is incorrect.
+          if (active) {
+            setTasks((current) => mergeCanvasTasks(current, incoming));
+            setTasksRef.current((current) => mergeCanvasTasks(current, incoming));
+          }
+        })
+      .catch((e) => console.warn("Canvas sync:", e.message))
       return () => {
         active = false
       }
-    }, []),
+    }, [setTasks]),
   )
 
   const assignLocation = async () => {
@@ -106,7 +121,7 @@ export default function TasksScreen() {
   }
 
   const keys = useMemo(() => scopeKeys(selectedDate, period), [selectedDate, period])
-  const visibleTasks = tasks.filter((task) => keys.includes(task.date))
+  const visibleTasks = tasks.filter((task) => !task.deleted && keys.includes(task.date))
   const doneCount = visibleTasks.filter((task) => task.done).length
 
   const dateLabel =
@@ -147,7 +162,10 @@ export default function TasksScreen() {
   const toggleTask = (id: number) =>
     setTasks((current) => current.map((item) => (item.id === id ? { ...item, done: !item.done } : item)))
 
-  const deleteTask = (id: number) => setTasks((current) => current.filter((item) => item.id !== id))
+  const deleteTask = (id: number) =>
+  setTasks((current) =>
+    current.flatMap((t) => (t.id !== id ? [t] : t.canvasId != null ? [{ ...t, deleted: true }] : [])),
+  )
 
   return (
     <Screen>
@@ -176,7 +194,7 @@ export default function TasksScreen() {
         </Pressable>
       </View>
 
-      {/* Menu sits in normal flow (not absolute) so taps work on iOS and Android */}
+      {}
       {periodMenuOpen && (
         <View style={styles.menu}>
           {(["day", "week", "month"] as Period[]).map((option) => (
@@ -273,7 +291,7 @@ export default function TasksScreen() {
       <Modal animationType="slide" onRequestClose={closeAdd} transparent visible={addOpen}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
           <Pressable onPress={closeAdd} style={styles.backdrop}>
-            {/* inner Pressable swallows taps so tapping the sheet doesn't close it */}
+            {}
             <Pressable onPress={() => {}} style={[styles.modal, { paddingBottom: 22 + insets.bottom }]}>
               <View style={styles.modalHeading}>
                 <View>

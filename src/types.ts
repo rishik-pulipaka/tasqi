@@ -10,4 +10,7 @@ export type Task = {
     lat: number;
     lng: number;
   }
+  canvasId?: number
+  url?: string
+  deleted?: boolean  
 }
