@@ -1,3 +1,56 @@
+/**
+ * ============================================================================
+ * TODO / PLACEHOLDERS: THINGS TO REPLACE BEFORE SHIPPING
+ * ============================================================================
+ * Search this file for "PLACEHOLDER" to jump to each one. Most are in the
+ * "PLACEHOLDERS (API / SERVER)" section, just above ProgressRing.
+ *
+ * 1. IMPORT PATHS (top of file)
+ *    - "../../models/Task" and "../../models/User" are guesses. Point them at
+ *      wherever Task.ts and User.ts actually live.
+ *    - Check that "../../models" exports Location and Pet.
+ *
+ * 2. userPet (PLACEHOLDER: our backend / auth)
+ *    - Hard-coded `new PetModel("pet-1", "Tasqi")`. Replace with the signed-in
+ *      user's real pet (AppContext or server), and fix the constructor
+ *      arguments if your Pet.ts differs.
+ *    - Pet earns coins/health from completed tasks, but components/Pet (the
+ *      pet drawn on screen) is not connected to it yet.
+ *
+ * 3. makeUser() (PLACEHOLDER: our backend / auth)
+ *    - User id, username and email are dummy values ("user-1", "tasqi-user", "").
+ *      Replace with the real signed-in user.
+ *
+ * 4. userLocation (PLACEHOLDER: device GPS)
+ *    - Hard-coded `new Location(0, 0)`. Replace with a real position
+ *      (e.g. expo-location) before using User.checkInToMeeting().
+ *
+ * 5. searchPlaces() (PLACEHOLDER: Google Places API)
+ *    - Currently returns the typed query with lat/lng of 0,0. Replace with
+ *      Places Autocomplete + Place Details to get real coordinates.
+ *
+ * 6. saveTaskToServer() (PLACEHOLDER: our backend)
+ *    - Empty stub. Use toUi(task) to get the full payload (time, type,
+ *      location, calendarEventId).
+ *
+ * 7. deleteTaskOnServer() (PLACEHOLDER: our backend)
+ *    - Empty stub. Saved locations are intentionally NOT deleted here.
+ *
+ * 8. saveLocationToServer() and savedLocations (PLACEHOLDER: our backend)
+ *    - saveLocationToServer() is an empty stub.
+ *    - savedLocations is a module-level array, so it only lasts while the app
+ *      is running. Load it from the server instead.
+ *
+ * 9. KNOWN GAPS (not placeholders, but worth fixing)
+ *    - tasksOf(user) reads User's private `tasks` field with bracket access.
+ *      Replace it with a getter if you add one to User.ts.
+ *    - Un-checking then re-checking a task rewards the pet twice. Add a guard
+ *      in toggleCompletion() or Task.markAsCompleted().
+ *    - `contextTasks as UiTask[]` in TasksScreen is a type workaround. Add
+ *      `type` and `location` to Task in ../../types to remove it.
+ * ============================================================================
+ */
+
 import {
   CalendarDays,
   Check,
@@ -32,6 +85,9 @@ import TopBar from "../../components/TopBar";
 import { useApp } from "../../context/AppContext";
 import { colors, fonts, shadow, type } from "../../theme";
 import type { Period } from "../../types";
+import { Location, Pet as PetModel } from "../../models";
+import { ToDoTask } from "../../models/Task";
+import { User } from "../../models/User";
 import { dayKey, parseDayKey, scopeKeys } from "../../utils/dates";
 import {
   createCalendarEvent,
@@ -54,7 +110,8 @@ const TASK_TYPES: TaskType[] = [
   "other",
 ];
 
-// Matches the Location class in the diagram (lat/lng come back from Google Maps)
+// Plain, serializable shape for UI state and the server (lat/lng come back from
+// Google Maps). Use toLocation() / toPlace() to move to and from the Location class.
 type Place = { name: string; lat: number; lng: number };
 
 type UiTask = {
@@ -68,79 +125,129 @@ type UiTask = {
   calendarEventId?: string;
 };
 
-class Task {
-  constructor(
-    public taskId: string,
-    public title: string,
-    public dueDate: Date,
-    public time: string,
-    public isCompleted = false,
-    public type: TaskType = "other",
-    public location?: Place,
-    public calendarEventId?: string
-  ) {}
+// ToDoTask (from Task.ts) only knows id, title, due date and done-ness.
+// The extra things this screen shows (time label, type, location, calendar
+// event id) live in this side table keyed by taskId, so they survive the
+// UiTask -> ToDoTask -> UiTask round trip done in withUser().
+type TaskMeta = {
+  time: string;
+  type: TaskType;
+  location?: Location;
+  calendarEventId?: string;
+};
+const taskMeta = new Map<string, TaskMeta>();
 
-  markAsCompleted() {
-    this.isCompleted = true;
-  }
-
-  static fromUi(t: UiTask) {
-    return new Task(
-      String(t.id),
-      t.title,
-      parseDayKey(t.date),
-      t.time,
-      t.done,
-      t.type,
-      t.location,
-      t.calendarEventId
-    );
-  }
-
-  toUi(): UiTask {
-    return {
-      id: Number(this.taskId),
-      title: this.title,
-      time: this.time,
-      date: dayKey(
-        new Date(
-          this.dueDate.getFullYear(),
-          this.dueDate.getMonth(),
-          this.dueDate.getDate(),
-          12
-        )
-      ),
-      done: this.isCompleted,
-      type: this.type,
-      location: this.location,
-      calendarEventId: this.calendarEventId,
-    };
-  }
+// Place (UI / Google Maps shape) <-> Location (class from Location.ts).
+// Place has no radius, so Location's default geofence radius is used.
+function toLocation(place: Place): Location {
+  return new Location(place.lat, place.lng, undefined, place.name);
 }
 
-class User {
-  constructor(public tasks: Task[] = []) {}
-
-  addTask(task: Task) {
-    this.tasks.push(task);
-  }
-
-  removeTaskOfId(taskId: string) {
-    const before = this.tasks.length;
-    this.tasks = this.tasks.filter((t) => t.taskId !== taskId);
-    return this.tasks.length < before;
-  }
-
-  getTaskOfId(taskId: string) {
-    return this.tasks.find((t) => t.taskId === taskId);
-  }
-
-  getPendingTasks() {
-    return this.tasks.filter((t) => !t.isCompleted);
-  }
+function toPlace(location: Location): Place {
+  return {
+    name: location.getAddressName(),
+    lat: location.getLatitude(),
+    lng: location.getLongitude(),
+  };
 }
+
+// "9:00 AM" + a day key -> a real Date, so dueDate carries the time of day too
+function dueDateFromUi(date: string, time: string): Date {
+  const d = parseDayKey(date);
+  const m = /(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(time);
+  if (!m) {
+    d.setHours(12, 0, 0, 0); // unknown time label: fall back to noon
+    return d;
+  }
+  let h = Number(m[1]);
+  const suffix = m[3]?.toUpperCase();
+  if (suffix) h = (h % 12) + (suffix === "PM" ? 12 : 0);
+  d.setHours(h, Number(m[2]), 0, 0);
+  return d;
+}
+
+// UI shape -> ToDoTask
+function fromUi(t: UiTask): ToDoTask {
+  const task = new ToDoTask(
+    String(t.id),
+    t.title,
+    dueDateFromUi(t.date, t.time)
+  );
+  // Rehydrating saved state isn't a completion event, so set the flag directly
+  // instead of markAsCompleted() (which would notify observers).
+  task.isCompleted = t.done;
+  taskMeta.set(task.getTaskId(), {
+    time: t.time,
+    type: t.type ?? "other",
+    location: t.location && toLocation(t.location),
+    calendarEventId: t.calendarEventId,
+  });
+  return task;
+}
+
+// ToDoTask -> UI shape
+function toUi(task: ToDoTask): UiTask {
+  const due = task.getDueDate();
+  const meta = taskMeta.get(task.getTaskId());
+  return {
+    id: Number(task.getTaskId()),
+    title: task.getTitle(),
+    time: meta?.time ?? formatTime(due),
+    date: dayKey(
+      new Date(due.getFullYear(), due.getMonth(), due.getDate(), 12)
+    ),
+    done: task.getIsCompleted(),
+    type: meta?.type,
+    location: meta?.location && toPlace(meta.location),
+    calendarEventId: meta?.calendarEventId,
+  };
+}
+
+// Brand-new task from the "Add a new task" form
+function createTask(
+  title: string,
+  when: Date,
+  type: TaskType,
+  location?: Place
+): ToDoTask {
+  const task = new ToDoTask(String(Date.now()), title, new Date(when));
+  taskMeta.set(task.getTaskId(), {
+    time: formatTime(when),
+    type,
+    location: location && toLocation(location),
+  });
+  return task;
+}
+
+// The checkbox works both ways: completing goes through markAsCompleted()
+// (so observers get notified); un-checking just clears the flag.
+function toggleCompletion(task: ToDoTask) {
+  if (task.getIsCompleted()) task.isCompleted = false;
+  else task.markAsCompleted();
+}
+
+// User.ts keeps `tasks` private and has no getter, so this reads it back with
+// bracket access (TypeScript allows it). Swap for user.getTasks() if you add one.
+const tasksOf = (user: User) => user["tasks"] as ToDoTask[];
+
+const findTask = (user: User, taskId: string) =>
+  tasksOf(user).find((t) => t.getTaskId() === taskId);
 
 // ============================ PLACEHOLDERS (API / SERVER) ============================
+
+// PLACEHOLDER (our backend / auth): the signed-in user's pet. Replace with real
+// data from AppContext or the server, and adjust the arguments if your Pet differs.
+const userPet = new PetModel("pet-1", "Tasqi");
+
+// PLACEHOLDER (device GPS): the user's current position, used by User.checkInToMeeting().
+// Replace with a real reading (e.g. expo-location) before checking in anywhere.
+const userLocation = new Location(0, 0);
+
+// A fresh User for each withUser() call. They all share the same Pet, so
+// rewards from completing tasks build up on it instead of being thrown away.
+function makeUser(): User {
+  return new User("user-1", "tasqi-user", "", userPet, userLocation);
+}
 
 // PLACEHOLDER (Google Places API): replace with Places Autocomplete + Place Details to get lat/lng.
 async function searchPlaces(query: string): Promise<Place[]> {
@@ -148,7 +255,8 @@ async function searchPlaces(query: string): Promise<Place[]> {
 }
 
 // PLACEHOLDER (our backend): save the task, including location lat/lng and time.
-async function saveTaskToServer(_task: Task): Promise<void> {}
+// Use toUi(task) to get the full payload (time, type, location, calendarEventId).
+async function saveTaskToServer(_task: ToDoTask): Promise<void> {}
 
 // PLACEHOLDER (our backend): delete the task. Locations are NOT deleted here.
 async function deleteTaskOnServer(_taskId: string): Promise<void> {}
@@ -244,7 +352,9 @@ export default function TasksScreen() {
   const [locQuery, setLocQuery] = useState("");
   const [results, setResults] = useState<Place[]>([]);
   const [searching, setSearching] = useState(false);
-  const [calStatus, setCalStatus] = useState<"unknown" | "granted" | "denied">("unknown");
+  const [calStatus, setCalStatus] = useState<"unknown" | "granted" | "denied">(
+    "unknown"
+  );
   const [calEvents, setCalEvents] = useState<CalendarEventItem[]>([]);
   const [calLoading, setCalLoading] = useState(false);
 
@@ -323,11 +433,13 @@ export default function TasksScreen() {
 
   const closeAdd = () => setAddOpen(false);
 
-  // Build a User from the current tasks, let the class do the work, then save the result back to state
+  // Build a User from the current tasks, let User.ts do the work, then save the result back to state
   const withUser = (change: (user: User) => void) => {
-    const user = new User(tasks.map(Task.fromUi));
+    const user = makeUser();
+    // User.addTask() subscribes the pet to each task (Observer pattern)
+    tasks.map(fromUi).forEach((t) => user.addTask(t));
     change(user);
-    setTasks(user.tasks.map((t) => t.toUi()));
+    setTasks(tasksOf(user).map(toUi));
   };
 
   const openAdd = () => {
@@ -384,15 +496,7 @@ export default function TasksScreen() {
 
   const addTask = () => {
     if (!newTitle.trim()) return;
-    const task = new Task(
-      String(Date.now()),
-      newTitle.trim(),
-      when,
-      formatTime(when),
-      false,
-      newType,
-      newLocation
-    );
+    const task = createTask(newTitle.trim(), when, newType, newLocation);
     withUser((user) => user.addTask(task));
     saveTaskToServer(task);
     // Write back to the device calendar: one-hour event at the task's date
@@ -400,14 +504,19 @@ export default function TasksScreen() {
     // patched onto it directly instead of going through withUser again.
     const start = new Date(when);
     const end = new Date(start.getTime() + 60 * 60 * 1000);
-    createCalendarEvent({ title: task.title, start, end }).then((eventId) => {
-      if (!eventId) return;
-      setTasks((prev) =>
-        (prev as UiTask[]).map((t) =>
-          t.id === Number(task.taskId) ? { ...t, calendarEventId: eventId } : t
-        ) as typeof prev
-      );
-    });
+    createCalendarEvent({ title: task.getTitle(), start, end }).then(
+      (eventId) => {
+        if (!eventId) return;
+        setTasks(
+          (prev) =>
+            (prev as UiTask[]).map((t) =>
+              t.id === Number(task.getTaskId())
+                ? { ...t, calendarEventId: eventId }
+                : t
+            ) as typeof prev
+        );
+      }
+    );
     setPeriod("day");
     setSelectedDate(when); // show the day the task was placed on
     setNewTitle("");
@@ -418,15 +527,16 @@ export default function TasksScreen() {
 
   const toggleTask = (id: number) =>
     withUser((user) => {
-      const task = user.getTaskOfId(String(id));
-      if (task) task.isCompleted = !task.isCompleted;
+      const task = findTask(user, String(id));
+      if (task) toggleCompletion(task);
     });
 
   // The list updates immediately; saved locations are left alone on purpose.
   // If the task was mirrored to the device calendar, its event goes too.
   const deleteTask = (id: number) => {
     const target = tasks.find((t) => t.id === id);
-    withUser((user) => user.removeTaskOfId(String(id)));
+    withUser((user) => user.removeTask(String(id)));
+    taskMeta.delete(String(id));
     deleteTaskOnServer(String(id));
     if (target?.calendarEventId) deleteCalendarEvent(target.calendarEventId);
   };

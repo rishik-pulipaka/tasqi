@@ -4,12 +4,12 @@ import { TaskObserver, Location } from "../models/";
 // 4. TASK HIERARCHY (ABSTRACT SUBJECT & SUBCLASSES)
 // ----------------------------------------------------------------------------
 export abstract class Task {
-  private taskId: string;
-  private title: string;
-  private dueDate: Date;
-  private isCompleted: boolean;
-  private baseRewardCoins: number;
-  private observers: TaskObserver[];
+  taskId: string;
+  title: string;
+  dueDate: Date;
+  isCompleted: boolean;
+  baseRewardCoins: number;
+  observers: TaskObserver[];
 
   constructor(
     taskId: string,
