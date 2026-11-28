@@ -1,0 +1,15 @@
+/**
+ * ============================================================================
+ * TASQI DOMAIN MODELS - COMPLETE TYPESCRIPT IMPLEMENTATION
+ * CS 180 Software Engineering - React Native Event-Driven Architecture
+ * ============================================================================
+ *
+ * Includes:
+ * 1. Location (Geofencing & Distance Calculations)
+ * 2. TaskObserver Interface & Observer Pattern Setup
+ * 3. Pet & PetState Enum (Virtual Pet Domain Logic)
+ * 4. Task (Abstract Subject), MeetingEvent, ToDoTask, JointTask
+ * 5. ItemType Enum, Item (Abstract), Accessory, FreeBeDay, Shop
+ * 6. User (Account, Inventory, Task Schedule Management)
+ * 7. CalendarIntegration & NotificationManager (Observer Subscriber)
+ */
